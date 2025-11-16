@@ -1,23 +1,8 @@
-class Car:
-    def __init__(self, car_id, make, model, year, price, is_available=True):
-        self.car_id = car_id
-        self.make = make
-        self.model = model
-        self.year = year
-        self.rental_price_per_day = price
-        self.is_available = is_available
-        print(f"Car {self.car_id} ({self.make} {self.model}) створено.")
+import pandas as pd
+import os
 
-    def is_available(self):
-        return self.is_available
-
-    def set_availability(self, status):
-        self.is_available = status
-
-    def __str__(self):
-        status = "Доступний" if self.is_available else "Заброньований"
-        return f"ID: {self.car_id} Авто: {self.make} {self.model} ({self.year}) Ціна/день: {self.rental_price_per_day} UAH Статус: {status}"
-
+CAR_DATA_FILE = "cars.csv"
+PRICE_DEFAULT = 1000
 
 class Customer:
     def __init__(self, customer_id, name, contact_info):
@@ -30,78 +15,116 @@ class Customer:
 
 
 class RentalAgreement:
-    def __init__(self, agreement_id, car, customer, start_date, end_date, rental_days):
+    def __init__(self, agreement_id, car_details, customer, start_date, end_date, rental_days):
         self.agreement_id = agreement_id
-        self.car = car
+        self.car_details = car_details
         self.customer = customer
         self.start_date = start_date
         self.end_date = end_date
         self.rental_days = rental_days
+        self.rental_price_per_day = car_details.get('price', PRICE_DEFAULT)
         self.total_cost = self.calculate_total_cost()
 
     def calculate_total_cost(self):
-        cost = self.car.rental_price_per_day * self.rental_days
+        cost = self.rental_price_per_day * self.rental_days
         return cost
 
     def generate_confirmation(self):
-        print("Підтвердження Прокату (Договір)")
+        print("\nПідтвердження Прокату (Договір)")
         print(f"Договір №: {self.agreement_id}")
         print(f"Клієнт: {self.customer.name} (ID: {self.customer.customer_id})")
-        print(f"Автомобіль: {self.car.make} {self.car.model} (ID: {self.car.car_id})")
+        print(f"Автомобіль ID: {self.car_details['id']} | {self.car_details['make']} {self.car_details['model']} ({self.car_details['year']})")
         print(f"Дати оренди: з {self.start_date} до {self.end_date}")
         print(f"Кількість днів: {self.rental_days}")
+        print(f"Ціна за день: {self.rental_price_per_day} UAH")
         print(f"Загальна вартість: {self.total_cost} UAH")
 
     def __str__(self):
-        return f"Договір №{self.agreement_id} ({self.customer.name} орендує {self.car.make} {self.car.model})"
-
+        return f"Договір №{self.agreement_id} ({self.customer.name} орендує {self.car_details['make']} {self.car_details['model']})"
 
 class RentalAgency:
-    def __init__(self):
-        self.cars = {}
+    def __init__(self, car_file):
         self.customers = {}
         self.agreements = {}
         self.next_agreement_id = 1001
+        self.car_file = car_file
+        self.cars_df = self._load_car_data()
+        
         print("Система Прокату Автомобілів ініціалізована.")
+        print(f"Завантажено {len(self.cars_df)} автомобілів з {self.car_file}.")
 
-    def add_car(self, car):
-        self.cars[car.car_id] = car
+    def _load_car_data(self):
+        try:
+            df = pd.read_csv(
+                self.car_file, 
+                sep=',', 
+                dtype={'id': str, 'make': str, 'model': str, 'year': int, 'available': str}
+            )
+            df['available_bool'] = df['available'].str.lower().map({'yes': True, 'no': False})
+            
+            if 'price' not in df.columns:
+                 df['price'] = PRICE_DEFAULT 
+            
+            df.set_index('id', inplace=True)
+            return df
+        except FileNotFoundError:
+            print(f"ПОМИЛКА: Файл даних {self.car_file} не знайдено.")
+            return pd.DataFrame()
+        except Exception as e:
+             print(f"ПОМИЛКА при читанні CSV: {e}")
+             return pd.DataFrame()
 
+    def _save_car_data(self):
+        df_to_save = self.cars_df.copy()
+        df_to_save['available'] = df_to_save['available_bool'].map({True: 'yes', False: 'no'})
+        df_to_save.reset_index(inplace=True) # Повертаємо 'id' як звичайний стовпець
+        df_to_save.to_csv(self.car_file, index=False, columns=['id', 'make', 'model', 'year', 'available', 'price']) # Зберігаємо лише потрібні колонки
+        
     def register_customer(self, customer):
         self.customers[customer.customer_id] = customer
 
     def get_available_cars(self):
-        available = [car for car in self.cars.values() if car.is_available]
-        print("\nДоступні Автомобілі")
-        if not available:
+        available_cars_df = self.cars_df[self.cars_df['available_bool'] == True]
+        
+        print("\n=== Доступні Автомобілі ===")
+        if available_cars_df.empty:
             print("Наразі немає доступних автомобілів.")
-        for car in available:
-            print(car)
-        return available
+        else:
+            for car_id, car in available_cars_df.iterrows():
+                 print(f"ID: {car_id} Авто: {car['make']} {car['model']} ({car['year']}) Ціна/день: {car['price']} UAH Статус: Доступний")
+
+        return available_cars_df
 
     def rent_car(self, customer_id, car_id, start_date, end_date, rental_days):
-        if car_id not in self.cars or not self.cars[car_id].is_available:
-            print(f"\nПОМИЛКА: Автомобіль ID {car_id} недоступний або не існує.")
+        
+        if car_id not in self.cars_df.index:
+            print(f"\nПОМИЛКА: Автомобіль ID {car_id} не існує.")
+            return None
+            
+        car_row = self.cars_df.loc[car_id]
+        
+        if not car_row['available_bool']:
+            print(f"\nПОМИЛКА: Автомобіль ID {car_id} вже заброньований.")
             return None
 
         if customer_id not in self.customers:
             print(f"\nПОМИЛКА: Клієнт ID {customer_id} не знайдений.")
             return None
 
-        car = self.cars[car_id]
         customer = self.customers[customer_id]
 
         agreement = RentalAgreement(
-            self.next_agreement_id, car, customer, start_date, end_date, rental_days
+            self.next_agreement_id, car_row, customer, start_date, end_date, rental_days
         )
-
-        car.set_availability(False)
+        self.cars_df.loc[car_id, 'available_bool'] = False
+        self._save_car_data() 
+        
         self.agreements[agreement.agreement_id] = agreement
+        self.next_agreement_id += 1
 
         print(f"\nУСПІХ: Автомобіль {car_id} видано. Створено договір №{agreement.agreement_id}.")
         agreement.generate_confirmation()
-
-        self.next_agreement_id += 1
+        
         return agreement
 
     def return_car(self, agreement_id):
@@ -110,24 +133,20 @@ class RentalAgency:
             return
 
         agreement = self.agreements[agreement_id]
-        car = agreement.car
-        
-        car.set_availability(True)
-        
-        print(f"\nПОВЕРНЕННЯ: Автомобіль {car.car_id} ({car.make} {car.model}) успішно повернено.")
+        car_id = agreement.car_details.name
+
+        if car_id in self.cars_df.index:
+             self.cars_df.loc[car_id, 'available_bool'] = True
+             self._save_car_data()
+
+             print(f"\nПОВЕРНЕННЯ: Автомобіль {car_id} ({agreement.car_details['make']} {agreement.car_details['model']}) успішно повернено.")
+        else:
+             print(f"\nПОПЕРЕДЖЕННЯ: Автомобіль ID {car_id} не знайдено в базі даних, але договір завершено.")
+
         del self.agreements[agreement_id]
         print(f"Договір №{agreement_id} завершено.")
 
-
-agency = RentalAgency()
-
-car1 = Car(car_id="C001", make="Toyota", model="Camry", year=2020, price=800)
-car2 = Car(car_id="C002", make="Honda", model="Civic", year=2022, price=750)
-car3 = Car(car_id="C003", make="BMW", model="X5", year=2023, price=1500, is_available=False) # Спочатку недоступний
-
-agency.add_car(car1)
-agency.add_car(car2)
-agency.add_car(car3)
+agency = RentalAgency(CAR_DATA_FILE)
 
 customer1 = Customer(customer_id="P101", name="Іван Сидоренко", contact_info="ivan@example.com")
 customer2 = Customer(customer_id="P102", name="Олена Петренко", contact_info="olena@example.com")
@@ -135,26 +154,27 @@ customer2 = Customer(customer_id="P102", name="Олена Петренко", con
 agency.register_customer(customer1)
 agency.register_customer(customer2)
 
-print("\nЕТАП 1: Клієнт переглядає доступні авто")
+print("\nЕТАП 1: Клієнт переглядає доступні авто (з cars.csv)")
 available_cars = agency.get_available_cars()
 
-print("\nЕТАП 2: Клієнт бронює авто C001")
+
+print("\nЕТАП 2: Клієнт бронює авто '234' (Toyota Camry)")
 rental_days = 5
 agreement_ivan = agency.rent_car(
     customer_id="P101", 
-    car_id="C001", 
+    car_id="234", 
     start_date="2025-11-15", 
     end_date="2025-11-20", 
     rental_days=rental_days
 )
 
-print(f"\nПеревірка статусу C001 після бронювання: Доступний? {car1.is_available}")
+print(f"\nПеревірка статусу '234' після бронювання: Доступний? {agency.cars_df.loc['234', 'available_bool']}")
 
 
-print("\nЕТАП 3: Спроба забронювати C001 знову")
+print("\nЕТАП 3: Спроба забронювати '234' знову")
 agency.rent_car(
     customer_id="P102", 
-    car_id="C001", 
+    car_id="234", 
     start_date="2025-11-21", 
     end_date="2025-11-23", 
     rental_days=2
@@ -165,7 +185,7 @@ if agreement_ivan:
     print(f"\nЕТАП 4: Клієнт {customer1.name} повертає авто")
     agency.return_car(agreement_ivan.agreement_id)
 
-print(f"\nПеревірка статусу C001 після повернення: Доступний? {car1.is_available}")
+print(f"\nПеревірка статусу '234' після повернення: Доступний? {agency.cars_df.loc['234', 'available_bool']}")
 
 print("\nФінальний перегляд доступних авто")
 agency.get_available_cars()
